@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="googlebot" content="noindex, nofollow" />
+  <title>Peg Drop — hosted</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh;
+      font-family: system-ui, Segoe UI, sans-serif;
+      background: radial-gradient(1200px 600px at 50% -10%, #1a2450, #070a14 55%);
+      color: #e8ecff;
+    }
+    header {
+      max-width: 920px; margin: 0 auto; padding: 28px 20px 8px;
+    }
+    h1 { margin: 0 0 6px; font-size: 1.6rem; letter-spacing: 0.04em; }
+    p { margin: 0; color: #9aa3c7; line-height: 1.45; }
+    .wrap {
+      max-width: 920px; margin: 0 auto; padding: 16px 20px 40px;
+      display: grid; gap: 16px;
+      grid-template-columns: 1fr;
+    }
+    @media (min-width: 880px) {
+      .wrap { grid-template-columns: 420px 1fr; align-items: start; }
+    }
+    .stage {
+      width: 100%; max-width: 420px; aspect-ratio: 420 / 746;
+      border-radius: 18px; overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+      border: 1px solid rgba(255,255,255,0.08);
+      background: #0b1020;
+      margin: 0 auto;
+    }
+    canvas { width: 100%; height: 100%; display: block; }
+    .panel {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px; padding: 16px;
+    }
+    .panel h2 { margin: 0 0 10px; font-size: 1rem; }
+    .btns { display: flex; flex-wrap: wrap; gap: 8px; }
+    button {
+      appearance: none; border: 0; cursor: pointer;
+      border-radius: 999px; padding: 10px 14px;
+      font: 700 13px system-ui, sans-serif;
+      color: #0b1020; background: #e8ecff;
+    }
+    button.rose { background: #ff6b9d; }
+    button.mid { background: #a78bfa; }
+    button.galaxy { background: #38bdf8; }
+    button.lion { background: #fbbf24; }
+    button.likes { background: #fb7185; }
+    button.ghost { background: transparent; color: #e8ecff; border: 1px solid rgba(255,255,255,0.25); }
+    code { background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 6px; font-size: 0.85em; }
+    .scoreline { font-size: 1.25rem; font-weight: 800; margin: 8px 0 14px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Peg Drop</h1>
+    <p>Loose fun Plinko inspired by research (Avatar Plinko-class). Original demo — not a competitor clone. Both pages are <code>noindex</code>.</p>
+  </header>
+  <div class="wrap">
+    <div class="stage"><canvas id="game"></canvas></div>
+    <div class="panel">
+      <h2>Demo gifts</h2>
+      <div class="scoreline">Score: <span id="score">0</span></div>
+      <div class="btns">
+        <button class="rose" data-gift="rose">Rose ×3</button>
+        <button class="mid" data-gift="mid">Perfume ×5</button>
+        <button class="galaxy" data-gift="galaxy">Galaxy rain</button>
+        <button class="lion" data-gift="lion">Lion heavy</button>
+        <button class="likes" data-gift="likes">Likes</button>
+        <button class="ghost" id="reset">Reset</button>
+      </div>
+      <p style="margin-top:14px">OBS: use the sibling <code>browser-source.html</code> URL as a Browser Source (420×746 or stretch). Optional TikFinity on <code>ws://localhost:21213/</code> if running locally.</p>
+    </div>
+  </div>
+  <script>
+
+(() => {
+  const DEMO = {
+    rose: { label: 'Rose', count: 3, scale: 0.9, color: '#ff6b9d' },
+    mid: { label: 'Perfume', count: 5, scale: 1.0, color: '#a78bfa' },
+    galaxy: { label: 'Galaxy', count: 18, scale: 0.85, color: '#38bdf8' },
+    lion: { label: 'Lion', count: 1, scale: 1.85, color: '#fbbf24', heavy: true },
+    likes: { label: 'Likes', count: 2, scale: 0.7, color: '#fb7185' },
+  };
+
+  const MULTS = [1, 3, 5, 10, 5, 3, 1];
+  const AVATARS = ['★','◆','●','▲','■','✦','✧','♥','♦','♣'];
+
+  function makeGame(canvas, opts) {
+    const ctx = canvas.getContext('2d');
+    const state = {
+      balls: [],
+      pegs: [],
+      score: 0,
+      roundLeft: 120,
+      last: performance.now(),
+      W: 420,
+      H: 746,
+      running: true,
+    };
+
+    function resize() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const cssW = canvas.clientWidth || opts.width || state.W;
+      const cssH = canvas.clientHeight || opts.height || state.H;
+      state.W = cssW;
+      state.H = cssH;
+      canvas.width = Math.floor(cssW * dpr);
+      canvas.height = Math.floor(cssH * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      layoutPegs();
+    }
+
+    function layoutPegs() {
+      state.pegs = [];
+      const rows = 10;
+      const top = state.H * 0.14;
+      const bottom = state.H * 0.72;
+      const left = state.W * 0.08;
+      const right = state.W * 0.92;
+      for (let r = 0; r < rows; r++) {
+        const y = top + (r / (rows - 1)) * (bottom - top);
+        const cols = r % 2 === 0 ? 7 : 8;
+        for (let c = 0; c < cols; c++) {
+          const t = cols === 1 ? 0.5 : c / (cols - 1);
+          const x = left + t * (right - left);
+          state.pegs.push({ x, y, r: Math.max(4, state.W * 0.012) });
+        }
+      }
+    }
+
+    function spawn(kind) {
+      const def = DEMO[kind] || DEMO.rose;
+      for (let i = 0; i < def.count; i++) {
+        const jitter = (Math.random() - 0.5) * state.W * 0.35;
+        state.balls.push({
+          x: state.W * 0.5 + jitter,
+          y: state.H * 0.06,
+          vx: (Math.random() - 0.5) * 40,
+          vy: 20 + Math.random() * 30,
+          r: 10 * def.scale * (state.W / 420),
+          color: def.color,
+          avatar: AVATARS[(Math.random() * AVATARS.length) | 0],
+          heavy: !!def.heavy,
+          scored: false,
+          label: def.label,
+        });
+      }
+      flash(def.label);
+    }
+
+    let flashText = '';
+    let flashUntil = 0;
+    function flash(t) {
+      flashText = t;
+      flashUntil = performance.now() + 900;
+    }
+
+    function bucketIndex(x) {
+      const left = state.W * 0.06;
+      const right = state.W * 0.94;
+      const t = (x - left) / (right - left);
+      const i = Math.floor(Math.max(0, Math.min(0.999, t)) * MULTS.length);
+      return i;
+    }
+
+    function step(dt) {
+      if (!state.running) return;
+      const g = 980 * (dt / 1000);
+      for (const b of state.balls) {
+        if (b.scored) continue;
+        b.vy += g * (b.heavy ? 1.35 : 1);
+        b.x += b.vx * (dt / 1000);
+        b.y += b.vy * (dt / 1000);
+
+        // walls
+        if (b.x < b.r) { b.x = b.r; b.vx = Math.abs(b.vx) * 0.7; }
+        if (b.x > state.W - b.r) { b.x = state.W - b.r; b.vx = -Math.abs(b.vx) * 0.7; }
+
+        // pegs
+        for (const p of state.pegs) {
+          const dx = b.x - p.x;
+          const dy = b.y - p.y;
+          const dist = Math.hypot(dx, dy) || 0.001;
+          const min = b.r + p.r;
+          if (dist < min) {
+            const nx = dx / dist, ny = dy / dist;
+            const overlap = min - dist;
+            b.x += nx * overlap;
+            b.y += ny * overlap;
+            const vn = b.vx * nx + b.vy * ny;
+            if (vn < 0) {
+              const bounce = b.heavy ? 0.35 : 0.55;
+              b.vx -= (1 + bounce) * vn * nx;
+              b.vy -= (1 + bounce) * vn * ny;
+              b.vx += (Math.random() - 0.5) * 80;
+            }
+          }
+        }
+
+        // buckets line
+        const bucketY = state.H * 0.86;
+        if (b.y + b.r >= bucketY && !b.scored) {
+          b.scored = true;
+          const mi = bucketIndex(b.x);
+          const pts = MULTS[mi] * (b.heavy ? 5 : 1);
+          state.score += pts;
+          b.mult = MULTS[mi];
+          b.settleY = bucketY + b.r * 0.2;
+          b.vy = 0; b.vx = 0;
+          if (opts.onScore) opts.onScore(state.score, pts, MULTS[mi]);
+        }
+      }
+      // cull old scored
+      state.balls = state.balls.filter(b => !b.scored || b.y < state.H + 40);
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, state.W, state.H);
+      // subtle board
+      const grd = ctx.createLinearGradient(0, 0, 0, state.H);
+      grd.addColorStop(0, opts.transparent ? 'rgba(8,10,20,0.15)' : '#0b1020');
+      grd.addColorStop(1, opts.transparent ? 'rgba(8,10,20,0.35)' : '#12182c');
+      if (!opts.transparent) {
+        ctx.fillStyle = grd;
+        ctx.fillRect(0, 0, state.W, state.H);
+      } else {
+        ctx.fillStyle = 'rgba(10,12,24,0.25)';
+        ctx.fillRect(0, 0, state.W, state.H);
+      }
+
+      // title
+      ctx.fillStyle = '#e8ecff';
+      ctx.font = `700 ${Math.floor(state.W * 0.07)}px system-ui,Segoe UI,sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText('PEG DROP', state.W / 2, state.H * 0.055);
+      ctx.font = `500 ${Math.floor(state.W * 0.032)}px system-ui,sans-serif`;
+      ctx.fillStyle = '#9aa3c7';
+      ctx.fillText('gift → balls → buckets', state.W / 2, state.H * 0.09);
+
+      // pegs
+      for (const p of state.pegs) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = '#5b6b9a';
+        ctx.fill();
+      }
+
+      // buckets
+      const left = state.W * 0.06;
+      const right = state.W * 0.94;
+      const top = state.H * 0.86;
+      const bot = state.H * 0.96;
+      const bw = (right - left) / MULTS.length;
+      MULTS.forEach((m, i) => {
+        const x = left + i * bw;
+        ctx.fillStyle = i === 3 ? 'rgba(251,191,36,0.35)' : 'rgba(56,189,248,0.18)';
+        ctx.fillRect(x + 2, top, bw - 4, bot - top);
+        ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+        ctx.strokeRect(x + 2, top, bw - 4, bot - top);
+        ctx.fillStyle = '#fff';
+        ctx.font = `700 ${Math.floor(state.W * 0.04)}px system-ui,sans-serif`;
+        ctx.fillText('×' + m, x + bw / 2, top + (bot - top) * 0.62);
+      });
+
+      // balls
+      for (const b of state.balls) {
+        const y = b.scored ? (b.settleY || b.y) : b.y;
+        ctx.beginPath();
+        ctx.arc(b.x, y, b.r, 0, Math.PI * 2);
+        ctx.fillStyle = b.color;
+        ctx.fill();
+        ctx.fillStyle = '#0b1020';
+        ctx.font = `700 ${Math.floor(b.r * 1.1)}px system-ui,sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(b.avatar, b.x, y + 1);
+      }
+
+      // HUD
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillStyle = '#e8ecff';
+      ctx.font = `700 ${Math.floor(state.W * 0.045)}px system-ui,sans-serif`;
+      ctx.fillText('SCORE ' + state.score, state.W * 0.06, state.H * 0.125);
+      ctx.textAlign = 'right';
+      ctx.fillText(Math.max(0, Math.ceil(state.roundLeft)) + 's', state.W * 0.94, state.H * 0.125);
+
+      if (performance.now() < flashUntil) {
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.font = `800 ${Math.floor(state.W * 0.06)}px system-ui,sans-serif`;
+        ctx.fillText(flashText, state.W / 2, state.H * 0.2);
+      }
+    }
+
+    function loop(now) {
+      const dt = Math.min(32, now - state.last);
+      state.last = now;
+      if (state.running) {
+        state.roundLeft -= dt / 1000;
+        if (state.roundLeft <= 0) {
+          state.roundLeft = 0;
+          state.running = false;
+          flash('ROUND OVER');
+        }
+      }
+      step(dt);
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    function reset() {
+      state.balls = [];
+      state.score = 0;
+      state.roundLeft = 120;
+      state.running = true;
+      if (opts.onScore) opts.onScore(0, 0, 0);
+      flash('RESET');
+    }
+
+    // TikFinity optional
+    function tryTikFinity() {
+      try {
+        const ws = new WebSocket('ws://localhost:21213/');
+        ws.onmessage = (ev) => {
+          let data;
+          try { data = JSON.parse(ev.data); } catch { return; }
+          const type = (data.event || data.type || '').toLowerCase();
+          const gift = (data.data && (data.data.giftName || data.data.name)) || data.giftName || '';
+          const g = String(gift).toLowerCase();
+          if (type.includes('gift') || data.giftName) {
+            if (g.includes('rose')) spawn('rose');
+            else if (g.includes('galaxy')) spawn('galaxy');
+            else if (g.includes('lion')) spawn('lion');
+            else if (g.includes('perfume') || g.includes('doughnut') || g.includes('donut')) spawn('mid');
+            else spawn('rose');
+          } else if (type.includes('like')) {
+            spawn('likes');
+          }
+        };
+        ws.onopen = () => flash('LIVE LINK');
+      } catch (_) {}
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+    requestAnimationFrame(loop);
+    tryTikFinity();
+
+    // expose
+    window.PegDrop = {
+      spawn,
+      reset,
+      demo: DEMO,
+      getScore: () => state.score,
+    };
+
+    // query ?gift=rose etc
+    const q = new URLSearchParams(location.search);
+    if (q.get('gift')) setTimeout(() => spawn(q.get('gift')), 400);
+    if (q.get('auto') === '1') {
+      const keys = ['rose', 'likes', 'mid', 'galaxy'];
+      setInterval(() => spawn(keys[(Math.random() * keys.length) | 0]), 3500);
+    }
+  }
+
+  window.bootPegDrop = makeGame;
+})();
+
+  bootPegDrop(document.getElementById('game'), {
+    transparent: false,
+    onScore: (total) => { document.getElementById('score').textContent = total; }
+  });
+  document.querySelectorAll('[data-gift]').forEach(btn => {
+    btn.addEventListener('click', () => window.PegDrop.spawn(btn.dataset.gift));
+  });
+  document.getElementById('reset').addEventListener('click', () => window.PegDrop.reset());
+  </script>
+</body>
+</html>
